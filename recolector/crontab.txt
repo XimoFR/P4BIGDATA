@@ -1,0 +1,22 @@
+# Crontab del recolector (servidor Linux siempre encendido).
+# Instalar con:  crontab recolector/crontab.txt   (ajusta P a la ruta real)
+# Hora del servidor en UTC recomendada: CRON_TZ=UTC
+CRON_TZ=UTC
+P=/opt/p4urbano
+PY=/opt/p4urbano/.venv/bin/python
+LOG=/opt/p4urbano/logs/cron.log
+
+# estado: nivel de tráfico por tramo. Origen cada 3 min -> cada 5 min.
+*/5  * * * *  cd $P/recolector && $PY recolector.py estado  >> $LOG 2>&1
+
+# tramos: lectura/media por tramo, tiempo real -> cada 15 min (foto de ~17 KB).
+*/15 * * * *  cd $P/recolector && $PY recolector.py tramos  >> $LOG 2>&1
+
+# espiras: vehículos/hora; el sensor se actualiza cada hora -> minuto 5 de cada hora.
+5    * * * *  cd $P/recolector && $PY recolector.py espiras >> $LOG 2>&1
+
+# aire y meteo municipal: datos horarios publicados poco después de la hora en punto.
+10   * * * *  cd $P/recolector && $PY recolector.py aire meteo >> $LOG 2>&1
+
+# aemet: predicción diaria; una vez al día basta y evita errores 429.
+30 6 * * *    cd $P/recolector && $PY recolector.py aemet >> $LOG 2>&1
