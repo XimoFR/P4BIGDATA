@@ -1,7 +1,7 @@
 services:
   nifi:
     image: apache/nifi:1.28.1
-    container_name: bigdata-nifi
+    container_name: p4-nifi
     ports:
       - "8443:8443"
     environment:

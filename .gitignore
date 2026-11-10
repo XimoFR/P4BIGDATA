@@ -20,3 +20,30 @@ docker-volumes/
 site/
 # Logs del recolector
 logs/
+*.log
+
+# Parquet y temporales generados por la ingesta
+*.parquet
+*.tmp
+
+# Credenciales: solo se versiona la plantilla .env.example
+.env.*
+!.env.example
+
+# Entrega (se hace aparte): PDF de evidencias
+docs/*.pdf
+
+# Entornos y empaquetado de Python
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editor y sistema operativo
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini

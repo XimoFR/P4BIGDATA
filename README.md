@@ -148,9 +148,11 @@ Ver [recolector/crontab.txt](recolector/crontab.txt). Se instala con `crontab re
 
 Volumen estimado: ≈10 MB/día en Parquet con esta programación.
 
-Para probarlo en Windows se incluye [recolector/programar_windows.ps1](recolector/programar_windows.ps1), que crea las mismas tareas en el Programador de tareas (`-Quitar` las elimina). Registro de ejecuciones en `logs/cron.log` y en `data/raw/_registro/ejecuciones.csv`.
+Para probarlo en Windows se incluye [recolector/programar_windows.ps1](recolector/programar_windows.ps1), que crea las mismas tareas en el Programador de tareas (`-Quitar` las elimina). Registro de ejecuciones en `logs/cron_<fuente>.log` y en `data/raw/_registro/ejecuciones.csv`.
 
-> Evidencia pendiente de añadir: captura del `crontab -l` / Programador de tareas y de un día de recogida (`ejecuciones.csv`).
+Evidencia: las cinco tareas `P4-*` en el Programador de tareas de Windows, con su última ejecución y resultado correcto, y las líneas resultantes en `ejecuciones.csv`.
+
+![Programador de tareas](docs/evidencias/programador_tareas.png)
 
 #### Carga única del histórico de aire (2016-2022)
 
@@ -180,31 +182,39 @@ Todos los valores se guardan como **texto, tal cual vienen**; solo se normalizan
 - **Columna `Id` y `_id`**: el recurso 2021-2022 trae `Id` y el `_id` interno de CKAN, que chocaban al normalizar los nombres; `_id` se renombra a `ckan_id`.
 - **Descarga cortada**: el servidor CKAN truncó una respuesta (`IncompleteRead`); el reintento cubre ahora cualquier error de red o JSON incompleto.
 - **Calidad del histórico (para el Bloque 4)**: fechas con día y mes intercambiados (p. ej. `fecha=2021-03-07` con `dia_del_mes=3`), `fecha` con formatos `2020-01-01T00:00:00` y `2022-10-05` según el recurso, y horas con formatos `0:00:00` y `4:00` mezclados.
+- **Programador de tareas**: (1) por defecto Windows no lanza tareas con el portátil a batería y la tarea acababa con resultado 0 sin ejecutar nada; se corrigió con `-AllowStartIfOnBatteries` y `-StartWhenAvailable`. (2) Varias tareas lanzadas a la vez fallaban (resultado 1) al escribir en el mismo `cron.log`; ahora hay un log por fuente. (3) `schtasks /TR` admite 261 caracteres como máximo; se usa el lanzador corto `ejecutar.cmd`.
 - **Windows**: `pyarrow` no cargaba por una directiva de Control de aplicaciones de Windows que bloquea DLL sin firmar; se resolvió desactivándola. En Windows hace falta además `tzdata` para leer zonas horarias.
 
 ### Ampliación: captura de espiras con Apache NiFi
 
 Despliegue: `docker compose up -d nifi` y acceso a `https://localhost:8443/nifi` (usuario `admin`; la contraseña está en `docker-compose.yml`). La carpeta `data/raw/nifi` del host se monta en `/data/raw/nifi` del contenedor.
 
-Flujo (cada hora): `InvokeHTTP` → `EvaluateJsonPath` → `SplitJson` → `PutFile`.
+Flujo (cada hora): `InvokeHTTP` → `EvaluateJsonPath` → `SplitJson` → `UpdateAttribute` → `PutFile`. `PutFile` no tiene propiedad de nombre de fichero (usa el atributo `filename` del flowfile), por eso se añade `UpdateAttribute` para poner el nombre con marca de tiempo.
 
 | Procesador | Configuración |
 |---|---|
 | InvokeHTTP | GET `https://geoportal.valencia.es/server/rest/services/OPENDATA/Trafico/MapServer/208/query?where=1=1&outFields=*&f=geojson`, Run Schedule 1 hour |
 | EvaluateJsonPath | Destination `flowfile-content`, propiedad `features` = `$.features` |
 | SplitJson | JsonPath Expression `$` (un flowfile por punto de medida) |
-| PutFile | Directory `/data/raw/nifi`, Filename `espiras_${now():format('yyyyMMdd-HHmmss')}_${fragment.index}.json` |
+| UpdateAttribute | Propiedad `filename` = `espiras_${now():format('yyyyMMdd-HHmmss')}_${fragment.index}.json` |
+| PutFile | Directory `/data/raw/nifi` |
 
-> Pendiente: ejecutar el flujo, capturar pantalla con los contadores y Data Provenance, y exportar con *Download flow definition* a `nifi/espiras_flow.json`.
+**Incidencia con el certificado del Geoportal**: la primera ejecución de `InvokeHTTP` falló con `SSLHandshakeException: PKIX path building failed`. El Geoportal usa certificados de la ACCV, cuya raíz no está en el almacén de confianza del Java del contenedor (`openssl` sí la reconoce). Solución: crear un truststore PKCS12 con la cadena ACCV (`keytool -importcert` dentro del contenedor, en `/opt/nifi/nifi-current/conf/p4-truststore.p12`) y asignar a `InvokeHTTP` un `StandardSSLContextService` que lo use, en lugar de desactivar la verificación TLS.
+
+**Resultado**: con *Run Once* en `InvokeHTTP` el flujo produjo 1 flowfile (503 KB) que `SplitJson` dividió en **1.211** (uno por punto de medida) y `PutFile` escribió como 1.211 ficheros `espiras_AAAAMMDD-HHMMSS_<n>.json` en `data/raw/nifi/` (≈425 bytes cada uno), con todas las colas a 0. Flujo exportado con *Download flow definition* en [nifi/espiras_flow.json](nifi/espiras_flow.json) (sin contraseñas: el truststore es un valor sensible y NiFi no lo exporta).
+
+![Flujo NiFi en ejecución](docs/evidencias/nifi_flujo.png)
+
+![Data Provenance de un flowfile en PutFile](docs/evidencias/nifi_provenance.png)
 
 #### Comparativa: recolector Python frente a flujo NiFi
 
-La columna de Python recoge lo observado en esta práctica; la de NiFi debe completarse tras ejecutar el flujo.
+Basada en lo observado al construir y ejecutar ambos. Nota: el primer procesador se creó desde la interfaz y el resto del flujo se configuró mediante la API REST de NiFi, así que el tiempo de desarrollo no es el de un montaje enteramente manual.
 
 | Aspecto | Recolector Python | Flujo NiFi |
 |---|---|---|
-| Tiempo de desarrollo | Unas pocas funciones; el reintento, el Parquet y el registro CSV hay que escribirlos | _por completar_ |
-| Facilidad para depurar un fallo | Traza en `cron.log` y mensaje en `ejecuciones.csv`; se reproduce ejecutando el script a mano | _por completar_ |
-| Visibilidad del estado en ejecución | Ninguna salvo logs; hay que consultar `ejecuciones.csv` | _por completar_ |
-| Facilidad de versionado en Git | Texto plano, diffs legibles | _por completar_ |
-| Recursos necesarios en el servidor | Python + 3 librerías, sin servicios; basta con cron | _por completar_ |
+| Tiempo de desarrollo | Unas pocas funciones (≈150 líneas en `recolector.py`); el reintento, el Parquet y el registro CSV hay que escribirlos, pero `requests` resolvió el certificado del Geoportal sin configurar nada | Imagen de 3,3 GB, 1-2 min de arranque, 5 procesadores y 4 conexiones. Hubo que resolver el certificado ACCV (truststore + servicio SSL) y añadir `UpdateAttribute`, porque `PutFile` no tiene propiedad de nombre de fichero. No se guarda en Parquet ni se registra el resultado en un CSV |
+| Facilidad para depurar un fallo | Traza en `logs/cron_<fuente>.log` y mensaje en `ejecuciones.csv`; se reproduce ejecutando el script a mano | El error aparece al instante como *bulletin* sobre el procesador (el `PKIX path building failed` se vio en la propia pantalla), pero la causa real exigió `docker logs`, `openssl` y `keytool` dentro del contenedor |
+| Visibilidad del estado en ejecución | Ninguna salvo los logs; hay que consultar `ejecuciones.csv` o el Programador de tareas | Contadores In/Out, colas entre procesadores (1 → 1 → 1.211 → 1.211 → 1.211, todas a 0) y Data Provenance de cada flowfile, todo en tiempo real |
+| Facilidad de versionado en Git | Texto plano, diffs legibles | Un JSON de ≈21 KB (`espiras_flow.json`) con identificadores, posiciones en el lienzo y descriptores de propiedades: versionable, pero con diffs ruidosos y poco legibles |
+| Recursos necesarios en el servidor | Python + 3 librerías, sin servicios; basta con cron y se ejecuta unos segundos | Contenedor Java permanente: imagen de 3,3 GB y 1,63 GiB de RAM en reposo (≈6 % de CPU), y genera 1.211 ficheros pequeños en lugar de un Parquet de ≈90 KB |

@@ -24,5 +24,8 @@ foreach ($t in $tareas) {
     # /TR admite como máximo 261 caracteres: por eso se usa un lanzador corto
     $cmd = "`"$lanzador`" $fuentes"
     schtasks /Create /TN $nombre /TR $cmd @frecuencia /F | Out-Null
+    # Por defecto Windows no lanza tareas con el portátil a batería: se permite y se recupera lo perdido
+    $ajustes = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
+    Set-ScheduledTask -TaskName $nombre -Settings $ajustes | Out-Null
     Write-Host "Creada $nombre ($fuentes)"
 }
